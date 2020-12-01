@@ -26,36 +26,33 @@ import sys
 import build_data
 from six.moves import range
 import tensorflow as tf
+import zipfile
+from zipfile import ZipFile
 
-FLAGS = tf.app.flags.FLAGS
+# Get the location of Valohai input files and output directory
+VH_INPUTS_DIR = os.getenv('VH_INPUTS_DIR')
+VH_OUTPUTS_DIR = os.getenv('VH_OUTPUTS_DIR')
 
-tf.app.flags.DEFINE_string(
-    'train_image_folder',
-    './ADE20K/ADEChallengeData2016/images/training',
-    'Folder containing trainng images')
-tf.app.flags.DEFINE_string(
-    'train_image_label_folder',
-    './ADE20K/ADEChallengeData2016/annotations/training',
-    'Folder containing annotations for trainng images')
+# Get a filepath to the Valohai Input file
+# The path is /valohai/inputs/<name-of-input-in-yaml>/file.zip
+dataset = os.path.join(VH_INPUTS_DIR, 'ADE20K/ADEChallengeData2016.zip')
 
-tf.app.flags.DEFINE_string(
-    'val_image_folder',
-    './ADE20K/ADEChallengeData2016/images/validation',
-    'Folder containing validation images')
+# Open the zip-file and extract all the files
+# The sample dataset zip file is structured in a way that the files will get extracted to a ADEChallengeData2016 folder
+with zipfile.ZipFile(dataset, 'r') as zip_ref:
+    zip_ref.extractall(os.path.join(VH_INPUTS_DIR, 'ADE20K'))
 
-tf.app.flags.DEFINE_string(
-    'val_image_label_folder',
-    './ADE20K/ADEChallengeData2016/annotations/validation',
-    'Folder containing annotations for validation')
-
-tf.app.flags.DEFINE_string(
-    'output_dir', './ADE20K/tfrecord',
-    'Path to save converted tfrecord of Tensorflow example')
+# Get paths to each folder
+# https://github.com/tensorflow/models/blob/master/research/deeplab/g3doc/ade20k.md#recommended-directory-structure-for-training-and-evaluation
+train_image_folder = os.path.join(VH_INPUTS_DIR, 'ADE20K/ADEChallengeData2016', 'images/training')
+train_image_label_folder = os.path.join(VH_INPUTS_DIR, 'ADE20K/ADEChallengeData2016', 'annotations/training')
+val_image_folder = os.path.join(VH_INPUTS_DIR, 'ADE20K/ADEChallengeData2016', 'images/validation')
+val_image_label_folder = os.path.join(VH_INPUTS_DIR, 'ADE20K/ADEChallengeData2016', 'annotations/validation')
 
 _NUM_SHARDS = 4
 
 
-def _convert_dataset(dataset_split, dataset_dir, dataset_label_dir):
+def _convert_dataset(dataset_split, dataset_dir, dataset_label_dir, zipObj):
   """Converts the ADE20k dataset into into tfrecord format.
 
   Args:
@@ -84,9 +81,7 @@ def _convert_dataset(dataset_split, dataset_dir, dataset_label_dir):
   label_reader = build_data.ImageReader('png', channels=1)
 
   for shard_id in range(_NUM_SHARDS):
-    output_filename = os.path.join(
-        FLAGS.output_dir,
-        '%s-%05d-of-%05d.tfrecord' % (dataset_split, shard_id, _NUM_SHARDS))
+    output_filename = '%s-%05d-of-%05d.tfrecord' % (dataset_split, shard_id, _NUM_SHARDS)
     with tf.python_io.TFRecordWriter(output_filename) as tfrecord_writer:
       start_idx = shard_id * num_per_shard
       end_idx = min((shard_id + 1) * num_per_shard, num_images)
@@ -109,14 +104,23 @@ def _convert_dataset(dataset_split, dataset_dir, dataset_label_dir):
             image_data, img_names[i], height, width, seg_data)
         tfrecord_writer.write(example.SerializeToString())
     sys.stdout.write('\n')
+    zipObj.write(output_filename)
     sys.stdout.flush()
 
 
+
 def main(unused_argv):
-  tf.gfile.MakeDirs(FLAGS.output_dir)
-  _convert_dataset(
-      'train', FLAGS.train_image_folder, FLAGS.train_image_label_folder)
-  _convert_dataset('val', FLAGS.val_image_folder, FLAGS.val_image_label_folder)
+
+  # Create a zip in the outputs directory.
+  # /valohai/outputs/
+  # We'll add all the generated .tfrecords to that zip 
+  # From there the zip will get automatically uploaded to the cloud so you can use the generated files in other executions
+  zipObj = ZipFile(os.path.join(VH_OUTPUTS_DIR, 'tfrecords.zip'), 'w')
+
+  _convert_dataset('train', train_image_folder, train_image_label_folder, zipObj)
+  _convert_dataset('val', val_image_folder, val_image_label_folder, zipObj)
+
+  zipObj.close()
 
 
 if __name__ == '__main__':
