@@ -4,6 +4,12 @@ Below a short summary of how the DeepLab sample was brought to Valohai.
 
 * Remember to check out [Valohai Quickstart](https://docs.valohai.com/tutorials/valohai/) and [Valohai Quickstart - Advanced Topics](https://docs.valohai.com/tutorials/valohai/advanced/) for a more detailed explanation of the core Valohai concepts.
 
+Other good docs.valohai.com reads are
+* https://docs.valohai.com/executions/inputs/
+* https://docs.valohai.com/executions/outputs/
+* https://docs.valohai.com/executions/live-outputs/
+* https://docs.valohai.com/valohai-yaml/
+
 ## Install Valohai CLI tools
 
 * `pip install valohai-cli` and login using your credentials (`vh login`)
@@ -196,6 +202,8 @@ We'll update the model training script to download the TFRecords from Azure Blob
         * Valohai will replace `{parameters}` with the parameters that are passed to the execution.
         * Valohai doesn't currently support lists as paramters, so I've left them as in the sample. Alternatively you could just pass them as string and then split them to a list in your Python.
 
+:arrow_right: Read more about Valohai parameters at https://docs.valohai.com/core-concepts/parameters/
+
 Next we can go and update `research/deeplab/train.py` with some Valohai specific lines.
 
 * First add variables that hold the paths to the Valohai inputs and outputs.
@@ -317,6 +325,13 @@ import json
 You can now run the step on valohai with `vh exec run train --adhoc`
 * You'll notice the `metadata` tab of an execution activate. Choose step on the x-axis and loss to the y-axis to see the values develop over time.
 * You can also see the metrics (and parameters) on the "Executions" table by clicking the "Show Columns" button and enabling the metrics you want to see.
+
+:arrow_right: Read more about collecting metadata with Valohai at https://docs.valohai.com/executions/metadata/ 
+
+
+The `valohai.yaml` also contains an example pipeline that chains the two steps together. 
+
+:arrow_right: Read more about pipelines here https://docs.valohai.com/core-concepts/pipelines/
 
 # DeepLab: Deep Labelling for Semantic Image Segmentation
 
