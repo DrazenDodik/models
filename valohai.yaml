@@ -8,7 +8,7 @@
         - python research/deeplab/datasets/build_ade20k_data.py
     inputs:
       - name: ADE20K
-        default: s3://tcs-dl-sample/ADEChallengeData2016.zip
+        default: azure://tcsvalohai/deeplab/data/01ERE/01EREM82KQF8DNWGJT3GNM3Q35/upload/ADEChallengeData2016.zip
 - step:
     name: Train DeepLab model
     image: tensorflow/tensorflow:1.15.4-gpu-py3

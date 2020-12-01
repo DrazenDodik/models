@@ -23,7 +23,7 @@ In our example we'll be using the ADE20K dataset as an example. We'll create a V
       command: python research/deeplab/datasets/build_ade20k_data.py
       inputs:
         - name: ADE20K
-          default: s3://tcs-dl-sample/ADEChallengeData2016.zip
+          default: azure://tcsvalohai/deeplab/data/01ERE/01EREM82KQF8DNWGJT3GNM3Q35/upload/ADEChallengeData2016.zip
     ``` 
 * Open `research/deeplab/datasets/build_ade20k_data.py` and edit it
     * First of all, add new imports as we'll be extracting the zip file in Python
@@ -68,7 +68,7 @@ In our example we'll be using the ADE20K dataset as an example. We'll create a V
             _convert_dataset('val', val_image_folder, val_image_label_folder, zipObj)
 
             zipObj.close()
-    ```
+        ```
 * Next we'll update the `_convert_dataset` method to take in the zip-file into which we'll package all TFRecord shards. 
     ```python
     def _convert_dataset(dataset_split, dataset_dir, dataset_label_dir, zipObj):
@@ -106,7 +106,7 @@ In our example we'll be using the ADE20K dataset as an example. We'll create a V
     * The `load` points to the `step.name` in `valohai.yaml` (Load data and convert). It's doing a simple substring, and as there is only one step starting with load, we can just type load instead of using the full name.
     * `--adhoc` means that Valohai shouldn't go to GitHub to fetch a commit that will be used to run this, instead the CLI should package everything in this folder (`models`) and send it to Valohai for an execution. This is useful for quick testing, but ultimately you should commit and push to your Git repository.
 
-Head on over to app.valohai.com and see the execution running. Once it's done, you'll see the zip file appear in the outputs tab. Head ot the outputs-tab and click on the button to copy the datum link to the file (this could also be a link to Azure Blob Storage, or any HTTPS address).
+Head on over to app.valohai.com and see the execution running. Once it's done, you'll see the zip file appear in the outputs tab. Head ot the outputs-tab and click on the button to copy the datum link to the file (or copy the azure:// link)
 
 ## Train a model
 
@@ -128,11 +128,11 @@ We'll update the model training script to download the TFRecords from Azure Blob
     * The `requirements.txt` file is created in the root of the folder and just contains `tf-slim==1.1.0`
 * Our train.py will need some data to train the model, so we'll need to provide the `tfrecords` generated in the previous step as an input to this step.
     * Add a inputs section for the `Train DeepLab model` step.
-    * Replace the default address with the datum link you copied from the previous steps outputs-tab.
+    * Replace the default address with the datum link or Azure link you copied from the previous steps outputs-tab.
         ```yaml
         inputs:
           - name: tfrecords
-            default: datum://017609d3-6c00-11cf-3202-06328b4f87d3
+            default: azure://tcsvalohai/deeplab/data/01ERE/01EREM82KQF8DNWGJT3GNM3Q35/upload/tfrecords.zip
         ```
 * Our `train.py` expects to find a folder with tfrecords, not a zip file that we're currently offering as a input. So let's create a new command to unzip the folder, before running the train.py script.
     * ```yaml
