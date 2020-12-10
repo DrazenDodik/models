@@ -1,3 +1,363 @@
+# DeepLab on Valohai :shark:
+
+Below a short summary of how the DeepLab sample was brought to Valohai.
+
+* Remember to check out [Valohai Quickstart](https://docs.valohai.com/tutorials/valohai/) and [Valohai Quickstart - Advanced Topics](https://docs.valohai.com/tutorials/valohai/advanced/) for a more detailed explanation of the core Valohai concepts.
+
+Other good docs.valohai.com reads are
+* https://docs.valohai.com/executions/inputs/
+* https://docs.valohai.com/executions/outputs/
+* https://docs.valohai.com/executions/live-outputs/
+* https://docs.valohai.com/valohai-yaml/
+
+## Install Valohai CLI tools
+
+* `pip install valohai-cli` and login using your credentials (`vh login`)
+* In the root of the project initialize a new project and link your current working directory to that Valohai project (`vh init`)
+    * Select `tensorflow/tensorflow:1.15.4-gpu-py3` as the Docker image for the project
+    * Create a new Valohai project and link your directory to that project
+
+## Load and convert the ADE20K Dataset
+In our example we'll be using the ADE20K dataset as an example. We'll create a Valohai step that downloads the data from the cloud, and then runs `datasets/build_ade20k_data.py` to extract and convert the dataset to TFRecords that we can use in training.
+
+Before continuing dowload the ADE20K sample dataset and upload it to your cloud storage. Go to app.valohai.com -> MyProject -> Data -> Upload. Click on the action button to get a "Copy datum:// URI" or "Copy azure:// URI" action. You can use either one of these as your default input for the YAML below. (Note: the Azure link is available only, if you've configured your private Azure data store)
+
+* Create a new step in `valohai.yaml` that uses the `tensorflow:1.15.4-gpu-py3` Docker image. This step should have a single input (the raw dataset, currently stored in our sample Azure Blob Storage) and parameters that are defined in the `build_ade20k_data.py`
+    * The step below is running two commands: **1)** Extract the downloaded zip file **2)** Run `build_ade20k_data.py` with the relevant parameters. These commands will be ran at the beginning of each execution.
+    ```yaml
+    - step:
+        name: Load data and convert
+        description: Converts ADE20K data to TFRecord file format with Example protos
+        image: tensorflow/tensorflow:1.15.4-gpu-py3
+        command:
+            - unzip /valohai/inputs/ADE20K/ADEChallengeData2016.zip -d ADE20K/
+            - python research/deeplab/datasets/build_ade20k_data.py {parameters}
+        inputs:
+        - name: ADE20K
+            default: azure://tcsvalohai/deeplab/data/01ERE/01EREM82KQF8DNWGJT3GNM3Q35/upload/ADEChallengeData2016.zip
+        parameters:
+        - name: train_image_folder
+            type: string
+            default: "./ADE20K/ADEChallengeData2016/images/training"
+        - name: train_image_label_folder
+            type: string
+            default: "./ADE20K/ADEChallengeData2016/annotations/training"
+        - name: val_image_folder
+            type: string
+            default: "./ADE20K/ADEChallengeData2016/images/validation"
+        - name: val_image_label_folder
+            type: string
+            default: "./ADE20K/ADEChallengeData2016/annotations/validation"
+        - name: output_dir
+            type: string
+            default: "./ADE20K/tfrecord"
+    ``` 
+* Open `research/deeplab/datasets/build_ade20k_data.py`.    
+    * Add `import tarfile` and update `main()` with the following
+    * ```python
+        # VALOHAI: 
+        # Create a tar.gz in the outputs directory.
+        # Get the location of the outputs directory by reading th environment variable that is passed to all machines (VH_OUTPUTS_DIR)
+        # Create a compressed file with all the generated tfrecords
+        # The compressed file will be placed to the Valohai outputs directory
+        # From there it will get automatically uploaded to the cloud so you can use the generated files in other executions
+
+        OUTPUTS_DIR = os.getenv('VH_OUTPUTS_DIR')
+
+        tfrecords = tarfile.open(os.path.join(OUTPUTS_DIR, 'tfrecords.tar.gz'), 'w:gz')
+        for dirpath, dirnames, filenames in os.walk(FLAGS.output_dir):
+            for filename in filenames:
+                filepath   = os.path.join(dirpath, filename)
+                tfrecords.add(filepath, filename)
+        tfrecords.close()
+        ```
+* Now you can run the execution in Valohai as an ad-hoc execution through the command-line: `vh exec run load --adhoc`.
+    * The `load` points to the `step.name` in `valohai.yaml` (Load data and convert). It's doing a simple substring, and as there is only one step starting with load, we can just type load instead of using the full name.
+    * `--adhoc` means that Valohai shouldn't go to GitHub to fetch a commit that will be used to run this, instead the CLI should package everything in this folder (`models`) and send it to Valohai for an execution. This is useful for quick testing, but ultimately you should commit and push to your Git repository.
+
+Head on over to app.valohai.com and see the execution running. Once it's done, you'll see the zip file appear in the outputs tab. Head ot the outputs-tab and click on the button to copy the datum link to the file (or copy the azure:// link)
+
+## Train a model
+
+We'll update the model training script to download the TFRecords from Azure Blob Storage (the tar.gz we saved in the previous step), define a set of Valohai parameters and print our key metrics (e.g loss).
+
+* Let's start by creating a new step called `Train DeepLab model` in `valohai.yaml`. 
+    * This model requires some additional libraries that are not included as a part of the `tensorflow/tensorflow:1.15` Docker image, so we're running `pip install -r requirements.txt` to install missing libraries.
+    * We're also updating the PYTHONPATH to contain the modules from `research/slim` as those will be used in DeepLab.
+    * ```yaml
+        - step:
+            name: Train DeepLab model
+            image: tensorflow/tensorflow:1.15.4-gpu-py3
+            command:
+                - export PYTHONPATH=$PYTHONPATH:`pwd`:`pwd`/research/slim:`pwd`/research
+                - pip install -r requirements.txt
+        ```
+    * The `requirements.txt` file is created in the root of the folder and just contains `tf-slim==1.1.0`
+* Our `train.py` will need some data to train the model, so we'll need to provide the `tfrecords` generated in the previous step as an input to this step.
+    * Add a inputs section for the `Train DeepLab model` step.
+    * Replace the default address with the datum link or Azure link you copied from the previous steps outputs-tab.
+        ```yaml
+        inputs:
+          - name: tfrecords
+            default: azure://tcsvalohai/deeplab/data/01ERK/01ERKQZ902916DJZ72FXRS60Y4/output-137/tfrecords.tar.gz
+        ```
+* Our `train.py` expects to find a folder with tfrecords, not a tar.gz file that we're currently offering as a input. So let's create a new command to extract the compressed file, before running the train.py script.
+    * ```yaml
+        - step:
+            name: Train DeepLab model
+            image: tensorflow/tensorflow:1.15.4-gpu-py3
+            command:
+                - export PYTHONPATH=$PYTHONPATH:`pwd`:`pwd`/research/slim:`pwd`/research
+                - pip install -r requirements.txt
+                - mkdir tfrecords
+                - tar -xvzf /valohai/inputs/tfrecords/tfrecords.tar.gz -C /valohai/repository/tfrecords/
+                - python research/deeplab/train.py --atrous_rates=6 --atrous_rates=12 --atrous_rates=18 {parameters}
+            inputs:
+            - name: tfrecords
+                default: azure://tcsvalohai/deeplab/data/01ERK/01ERKQZ902916DJZ72FXRS60Y4/output-137/tfrecords.tar.gz
+        ```
+* Finally, in the same way we defined inputs to this steps, we want to define a set of parameters that you can change and optimize through Valohai. The parameters listing in based on the TensorFlow sample. You can just copy&paste the definition.
+    * ```yaml
+        - step:
+            name: Train DeepLab model
+            image: tensorflow/tensorflow:1.15.4-gpu-py3
+            command:
+                - export PYTHONPATH=$PYTHONPATH:`pwd`:`pwd`/research/slim:`pwd`/research
+                - pip install -r requirements.txt
+                - mkdir tfrecords
+                - tar -xvzf /valohai/inputs/tfrecords/tfrecords.tar.gz -C /valohai/repository/tfrecords/
+                - python research/deeplab/train.py --atrous_rates=6 --atrous_rates=12 --atrous_rates=18 {parameters}
+            inputs:
+            - name: tfrecords
+                default: azure://tcsvalohai/deeplab/data/01ERK/01ERKQZ902916DJZ72FXRS60Y4/output-137/tfrecords.tar.gz
+            parameters:
+            - name: logtostderr
+                type: flag
+                default: True
+                pass-as: --logtostderr={v}
+            - name: training_number_of_steps
+                type: integer
+                default: 100
+                description: "The number of steps used for training"
+            - name: train_split
+                type: string
+                default: "train"
+                description: "Which split of the dataset to be used for training"
+            - name: model_variant
+                type: string
+                default: "xception_65"
+            - name: output_stride
+                type: integer
+                default: 16
+            - name: decoder_output_stride
+                type: integer
+                default: 4
+            - name: train_crop_size
+                type: string
+                default: "513,513"
+                description: "Image crop size [height, width] during training."
+            - name: train_batch_size
+                type: integer
+                default: 4
+                description: "The number of images in each batch during training."
+            - name: min_resize_value
+                type: integer
+                default: 513
+            - name: max_resize_value
+                type: integer
+                default: 513
+            - name: resize_factor
+                type: integer
+                default: 16
+            - name: dataset
+                type: string
+                default: "ade20k"
+                description: "Name of the segmentation dataset."
+            - name: dataset_dir
+                type: string
+                default: "./tfrecords"
+            - name: train_logdir
+                type: string
+                default: "/valohai/repository/checkpoints"
+        ```
+    * Now to pass these parameters to our Python script, we need to change the command to include a placeholder for all parameters:
+        * `python research/deeplab/train.py --atrous_rates=6 --atrous_rates=12 --atrous_rates=18 {parameters}`
+        * Valohai will replace `{parameters}` with the parameters that are passed to the execution.
+        * Valohai doesn't currently support lists as paramters, so I've left them as in the sample. Alternatively you could just pass them as string and then split them to a list in your Python.
+
+:arrow_right: Read more about Valohai parameters at https://docs.valohai.com/core-concepts/parameters/
+
+You can now run the step on valohai with `vh exec run train --adhoc`
+* Note you can go the Valohai UI and copy an existing execution, and change the parameters directly in the UI (or copy an existing Execution as a Task for parameter sweeps)
+
+Next we can go and update `research/deeplab/train.py` with some Valohai specific lines.
+
+Valohai can collect key metrics from your executions (e.g. accuracy, loss etc.) as long as this is printed out as JSON during the execution. By default the TF Sample doesn't print out JSON, so we need to create a custom train_step function that will be used when training the model. In it, we can add the JSON printing.
+
+* Add `import json` to `train.py` as we'll need it when printing Valohai metadata
+* Edit `slim.learning.train` in side your `main()`
+    ```python
+          slim.learning.train(
+          train_tensor,
+          train_step_fn=train_step, #Added a custom train_step_function
+          logdir=FLAGS.train_logdir,
+          log_every_n_steps=FLAGS.log_steps,
+          master=FLAGS.master,
+          number_of_steps=FLAGS.training_number_of_steps,
+          is_chief=(FLAGS.task == 0),
+          chief_only_hooks=your_hooks,
+          session_config=session_config,
+          startup_delay_steps=startup_delay_steps,
+          init_fn=init_fn,
+          summary_op=summary_op,
+          save_summaries_secs=FLAGS.save_summaries_secs,
+          save_interval_secs=FLAGS.save_interval_secs)
+    ```
+* Now let's create that function, so it can be actually called :sweat_smile:
+* Our sample below just collects the `loss` metric, but you'd do the same approach for other metrics
+```python
+# https://github.com/google-research/tf-slim/blob/master/tf_slim/learning.py
+def train_step(sess, train_op, global_step, train_step_kwargs):
+  """Function that takes a gradient step and specifies whether to stop.
+  Args:
+    sess: The current session.
+    train_op: An `Operation` that evaluates the gradients and returns the total
+      loss.
+    global_step: A `Tensor` representing the global training step.
+    train_step_kwargs: A dictionary of keyword arguments.
+  Returns:
+    The total loss and a boolean indicating whether or not to stop training.
+  Raises:
+    ValueError: if 'should_trace' is in `train_step_kwargs` but `logdir` is not.
+  """
+  start_time = time.time()
+
+  trace_run_options = None
+  run_metadata = None
+  if 'should_trace' in train_step_kwargs:
+    if 'logdir' not in train_step_kwargs:
+      raise ValueError('logdir must be present in train_step_kwargs when '
+                       'should_trace is present')
+    if sess.run(train_step_kwargs['should_trace']):
+      trace_run_options = config_pb2.RunOptions(
+          trace_level=config_pb2.RunOptions.FULL_TRACE)
+      run_metadata = config_pb2.RunMetadata()
+
+  total_loss, np_global_step = sess.run([train_op, global_step],
+                                        options=trace_run_options,
+                                        run_metadata=run_metadata)
+  time_elapsed = time.time() - start_time
+
+  if run_metadata is not None:
+    tl = timeline.Timeline(run_metadata.step_stats)
+    trace = tl.generate_chrome_trace_format()
+    trace_filename = os.path.join(train_step_kwargs['logdir'],
+                                  'tf_trace-%d.json' % np_global_step)
+    logging.info('Writing trace to %s', trace_filename)
+    file_io.write_string_to_file(trace_filename, trace)
+    if 'summary_writer' in train_step_kwargs:
+      train_step_kwargs['summary_writer'].add_run_metadata(
+          run_metadata, 'run_metadata-%d' % np_global_step)
+
+  # In addition to using logging.info to log the loss for each step, we'll want to print out JSON that Valohai can read as metadata.
+  if 'should_log' in train_step_kwargs:
+    if sess.run(train_step_kwargs['should_log']):
+      # If it's JSON, it will be available as metadata in Valohai
+      # You can then sort and compare different runs using these metrics.
+      print(json.dumps({
+        "step": str(np_global_step),
+        "loss": str(total_loss)
+      }))
+      logging.info('global step %d: loss = %.4f (%.3f sec/step)', np_global_step, total_loss, time_elapsed)
+
+  if 'should_stop' in train_step_kwargs:
+    should_stop = sess.run(train_step_kwargs['should_stop'])
+  else:
+    should_stop = False
+
+  return total_loss, should_stop
+
+```
+
+You can now run the step on valohai with `vh exec run train --adhoc`
+* You'll notice the `metadata` tab of an execution activate. Choose step on the x-axis and loss to the y-axis to see the values develop over time.
+* You can also see the metrics (and parameters) on the "Executions" table by clicking the "Show Columns" button and enabling the metrics you want to see.
+
+:arrow_right: Read more about collecting metadata with Valohai at https://docs.valohai.com/executions/metadata/ 
+
+
+## Export model to frozen graph
+
+Let's start by adding a new step to our `valohai.yaml`. This step will export a trained TF model to a frozen graph.
+
+The step is quite familiar to the previous steps:
+* Define the name, Docker image, commands to execute, data inputs and parameters
+* In the inputs, we're taking in the `checkpoints.tar.gz` generated in the previous step.
+* Under commands we against install any additional libraries we might need, extract the downloaded file and run the `export_model.py`
+
+```yaml
+- step:
+    name: Export trained model to TF frozen graph
+    image: tensorflow/tensorflow:1.15.4-gpu-py3
+    command:
+        - export PYTHONPATH=$PYTHONPATH:`pwd`:`pwd`/research/slim:`pwd`/research
+        - pip install -r requirements.txt
+        - mkdir checkpoints
+        - tar -xvzf /valohai/inputs/checkpoints/checkpoints.tar.gz -C /valohai/repository/checkpoints/
+        - python research/deeplab/export_model.py --atrous_rates=6 --atrous_rates=12 --atrous_rates=18 {parameters}
+    inputs:
+      - name: checkpoints
+        default: azure://tcsvalohai/deeplab/data/01ERK/01ERKQZ902916DJZ72FXRS60Y4/output-141/checkpoints.tar.gz
+    parameters:
+      - name: dataset
+        type: string
+        default: "ade20k"
+        description: "Name of the segmentation dataset."
+      - name: checkpoint_path
+        type: string
+        default: "/valohai/repository/checkpoints/"
+      - name: save_inference_graph
+        type: flag
+        default: True
+      - name: export_path
+        type: string
+        default: "/valohai/outputs/export"
+      - name: model_variant
+        type: string
+        default: "xception_65"
+        description: "Name of the segmentation dataset."
+      - name: output_stride
+        type: integer
+        default: 8
+      - name: num_classes
+        type: integer
+        default: 151
+```
+
+* You can update the `export_model.py` to read the export path of a single checkpoint. In `export_model.py`
+    ```python
+        freeze_graph.freeze_graph_with_def_protos(
+            graph_def,
+            saver.as_saver_def(),
+            tf.train.latest_checkpoint(FLAGS.checkpoint_path), # VALOHAI: Updated to fetch the latest checkpoint
+            _OUTPUT_NAME + ',' + _OUTPUT_PROB_NAME,
+            restore_op_name=None,
+            filename_tensor_name=None,
+            output_graph=FLAGS.export_path,
+            clear_devices=True,
+            initializer_nodes=None)
+    ```
+
+## Inference
+
+Valohai Deployments can be used for online inference, which gives you an online REST endpoint that you can call and get a response. In this case you could have an endpoint to which you send an image and get the model predictions as a result.
+
+If you don't have a need for online prediction, with getting results immediately, you can also use standard Valohai executions to perform batch executions. You'd start an execution that takes a number of image files as an input, performs predictions on them and outputs the results.
+
+The `valohai.yaml` also contains an example pipeline that chains the two steps together. 
+
+:arrow_right: Read more about pipelines here https://docs.valohai.com/core-concepts/pipelines/
+
 # DeepLab: Deep Labelling for Semantic Image Segmentation
 
 DeepLab is a state-of-art deep learning model for semantic image segmentation,

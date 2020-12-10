@@ -1,0 +1,146 @@
+---
+
+- step:
+    name: Load data and convert
+    description: Converts ADE20K data to TFRecord file format with Example protos
+    image: tensorflow/tensorflow:1.15.4-gpu-py3
+    command:
+        - unzip /valohai/inputs/ADE20K/ADEChallengeData2016.zip -d ADE20K/
+        - python research/deeplab/datasets/build_ade20k_data.py {parameters}
+    inputs:
+      - name: ADE20K
+        default: azure://tcsvalohai/deeplab/data/01ERE/01EREM82KQF8DNWGJT3GNM3Q35/upload/ADEChallengeData2016.zip
+    parameters:
+      - name: train_image_folder
+        type: string
+        default: "./ADE20K/ADEChallengeData2016/images/training"
+      - name: train_image_label_folder
+        type: string
+        default: "./ADE20K/ADEChallengeData2016/annotations/training"
+      - name: val_image_folder
+        type: string
+        default: "./ADE20K/ADEChallengeData2016/images/validation"
+      - name: val_image_label_folder
+        type: string
+        default: "./ADE20K/ADEChallengeData2016/annotations/validation"
+      - name: output_dir
+        type: string
+        default: "./ADE20K/tfrecord"
+- step:
+    name: Train DeepLab model
+    image: tensorflow/tensorflow:1.15.4-gpu-py3
+    command:
+        - export PYTHONPATH=$PYTHONPATH:`pwd`:`pwd`/research/slim:`pwd`/research
+        - pip install -r requirements.txt
+        - mkdir tfrecords
+        - tar -xvzf /valohai/inputs/tfrecords/tfrecords.tar.gz -C /valohai/repository/tfrecords/
+        - python research/deeplab/train.py --atrous_rates=6 --atrous_rates=12 --atrous_rates=18 {parameters}
+    inputs:
+      - name: tfrecords
+        default: azure://tcsvalohai/deeplab/data/01ERE/01EREM82KQF8DNWGJT3GNM3Q35/upload/tfrecords.tar.gz
+    parameters:
+      - name: logtostderr
+        type: flag
+        default: True
+        pass-as: --logtostderr={v}
+      - name: training_number_of_steps
+        type: integer
+        default: 100
+        description: "The number of steps used for training"
+      - name: train_split
+        type: string
+        default: "train"
+        description: "Which split of the dataset to be used for training"
+      - name: model_variant
+        type: string
+        default: "xception_65"
+      - name: output_stride
+        type: integer
+        default: 16
+      - name: decoder_output_stride
+        type: integer
+        default: 4
+      - name: train_crop_size
+        type: string
+        default: "513,513"
+        description: "Image crop size [height, width] during training."
+      - name: train_batch_size
+        type: integer
+        default: 4
+        description: "The number of images in each batch during training."
+      - name: min_resize_value
+        type: integer
+        default: 513
+      - name: max_resize_value
+        type: integer
+        default: 513
+      - name: resize_factor
+        type: integer
+        default: 16
+      - name: dataset
+        type: string
+        default: "ade20k"
+        description: "Name of the segmentation dataset."
+      - name: dataset_dir
+        type: string
+        default: "./tfrecords"
+      - name: train_logdir
+        type: string
+        default: "/valohai/repository/checkpoints"
+- step:
+    name: Export trained model to TF frozen graph
+    image: tensorflow/tensorflow:1.15.4-gpu-py3
+    command:
+        - export PYTHONPATH=$PYTHONPATH:`pwd`:`pwd`/research/slim:`pwd`/research
+        - pip install -r requirements.txt
+        - mkdir checkpoints
+        - tar -xvzf /valohai/inputs/checkpoints/checkpoints.tar.gz -C /valohai/repository/checkpoints/
+        - python research/deeplab/export_model.py --atrous_rates=6 --atrous_rates=12 --atrous_rates=18 {parameters}
+    inputs:
+      - name: checkpoints
+        default: azure://tcsvalohai/deeplab/data/01ERE/01EREM82KQF8DNWGJT3GNM3Q35/upload/checkpoints.tar.gz
+    parameters:
+      - name: dataset
+        type: string
+        default: "ade20k"
+        description: "Name of the segmentation dataset."
+      - name: checkpoint_path
+        type: string
+        default: "/valohai/repository/checkpoints/"
+      - name: save_inference_graph
+        type: flag
+        default: True
+      - name: export_path
+        type: string
+        default: "/valohai/outputs/frozen_graph"
+      - name: model_variant
+        type: string
+        default: "xception_65"
+        description: "Name of the segmentation dataset."
+      - name: output_stride
+        type: integer
+        default: 8
+      - name: num_classes
+        type: integer
+        default: 151
+- pipeline:
+    name: Convert, train and export
+    nodes:
+      - name: load-node
+        type: execution
+        step: Load data and convert
+      - name: train-node
+        type: execution
+        step: Train DeepLab model
+        override:
+          inputs:
+            - name: tfrecords
+      - name: export-node
+        type: execution
+        step: Export trained model to TF frozen graph
+        override:
+          inputs:
+            - name: checkpoints
+    edges:
+      - [load-node.output.tfrecords.tar.gz, train-node.input.tfrecords]
+      - [train-node.output.checkpoints.tar.gz, export-node.input.checkpoints]

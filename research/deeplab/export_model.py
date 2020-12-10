@@ -76,11 +76,9 @@ _RAW_OUTPUT_PROB_NAME = 'RawSemanticProbabilities'
 
 def _create_input_tensors():
   """Creates and prepares input tensors for DeepLab model.
-
   This method creates a 4-D uint8 image tensor 'ImageTensor' with shape
   [1, None, None, 3]. The actual input tensor name to use during inference is
   'ImageTensor:0'.
-
   Returns:
     image: Preprocessed 4-D float32 tensor with shape [1, crop_height,
       crop_width, 3].
@@ -183,7 +181,7 @@ def main(unused_argv):
     freeze_graph.freeze_graph_with_def_protos(
         graph_def,
         saver.as_saver_def(),
-        FLAGS.checkpoint_path,
+        tf.train.latest_checkpoint(FLAGS.checkpoint_path), # VALOHAI: Updated to fetch the latest checkpoint
         _OUTPUT_NAME + ',' + _OUTPUT_PROB_NAME,
         restore_op_name=None,
         filename_tensor_name=None,

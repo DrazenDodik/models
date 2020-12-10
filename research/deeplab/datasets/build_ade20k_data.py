@@ -26,6 +26,7 @@ import sys
 import build_data
 from six.moves import range
 import tensorflow as tf
+import tarfile
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -66,7 +67,7 @@ def _convert_dataset(dataset_split, dataset_dir, dataset_label_dir):
   Raises:
     RuntimeError: If loaded image and label have different shape.
   """
-
+  
   img_names = tf.gfile.Glob(os.path.join(dataset_dir, '*.jpg'))
   random.shuffle(img_names)
   seg_names = []
@@ -112,12 +113,28 @@ def _convert_dataset(dataset_split, dataset_dir, dataset_label_dir):
     sys.stdout.flush()
 
 
+
 def main(unused_argv):
   tf.gfile.MakeDirs(FLAGS.output_dir)
-  _convert_dataset(
-      'train', FLAGS.train_image_folder, FLAGS.train_image_label_folder)
+
+  _convert_dataset('train', FLAGS.train_image_folder, FLAGS.train_image_label_folder)
   _convert_dataset('val', FLAGS.val_image_folder, FLAGS.val_image_label_folder)
 
+  # VALOHAI: 
+  # Create a tar.gz in the outputs directory.
+  # Get the location of the outputs directory by reading th environment variable that is passed to all machines (VH_OUTPUTS_DIR)
+  # Create a compressed file with all the generated tfrecords
+  # The compressed file will be placed to the Valohai outputs directory
+  # From there it will get automatically uploaded to the cloud so you can use the generated files in other executions
+
+  OUTPUTS_DIR = os.getenv('VH_OUTPUTS_DIR')
+
+  tfrecords = tarfile.open(os.path.join(OUTPUTS_DIR, 'tfrecords.tar.gz'), 'w:gz')
+  for dirpath, dirnames, filenames in os.walk(FLAGS.output_dir):
+    for filename in filenames:
+        filepath   = os.path.join(dirpath, filename)
+        tfrecords.add(filepath, filename)
+  tfrecords.close()
 
 if __name__ == '__main__':
   tf.app.run()
